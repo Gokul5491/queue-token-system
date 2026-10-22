@@ -238,16 +238,64 @@ try {
     assert.equal(listRes.status, 200);
     assert.ok(Array.isArray(listRes.body.queues));
 
-    // 4. Admin can call next on queue without an owner key
-    const qAdmin = (await api('/queues', { method: 'POST', body: { name: 'Admin Managed' } })).body;
-    await api(`/queues/${qAdmin.id}/join`, { method: 'POST', body: { name: 'Patient' } });
-    const nextRes = await api(`/queues/${qAdmin.id}/next`, { method: 'POST', token: adminToken });
+    // 4. Admin cannot create or join queues (strict role boundaries)
+    const adminCreate = await api('/queues', { method: 'POST', body: { name: 'Admin Queue' }, token: adminToken });
+    assert.equal(adminCreate.status, 403, 'Admin must not be allowed to create a queue');
+
+    const qTest = (await api('/queues', { method: 'POST', body: { name: 'Supervised Queue' } })).body;
+    const adminJoin = await api(`/queues/${qTest.id}/join`, { method: 'POST', body: { name: 'Admin' }, token: adminToken });
+    assert.equal(adminJoin.status, 403, 'Admin must not be allowed to join a queue');
+
+    // 5. Admin can oversee and call next on queues via admin privileges
+    await api(`/queues/${qTest.id}/join`, { method: 'POST', body: { name: 'Patient' } });
+    const nextRes = await api(`/queues/${qTest.id}/next`, { method: 'POST', token: adminToken });
     assert.equal(nextRes.status, 200);
     assert.equal(nextRes.body.nowServing, 1);
 
-    // 5. Unauthenticated call to /admin/queues is rejected
+    // 6. Only single admin exists: self-registering as Admin is forbidden
+    const regAdmin = await api('/auth/register', {
+      method: 'POST',
+      body: { email: 'fake_admin@queue.io', password: 'Password123!', name: 'Imposter', role: 'Admin' },
+    });
+    assert.equal(regAdmin.status, 403, 'Self-registering as Admin must be rejected');
+
+    // 7. Unauthenticated call to /admin/queues is rejected
     const unauth = await api('/admin/queues');
     assert.equal(unauth.status, 401);
+  });
+
+  await test('Role boundaries: Owners cannot join queues, Customers cannot create queues', async () => {
+    // 1. Register an Owner
+    const ownerRes = await api('/auth/register', {
+      method: 'POST',
+      body: { email: `owner_test_${Date.now()}@queue.io`, password: 'Password123!', name: 'Owner Tim', role: 'Owner' },
+    });
+    assert.equal(ownerRes.status, 201);
+    const ownerToken = ownerRes.body.idToken;
+
+    // 2. Owner CAN create queue
+    const qOwn = await api('/queues', { method: 'POST', body: { name: 'Tims Clinic' }, token: ownerToken });
+    assert.equal(qOwn.status, 201);
+
+    // 3. Owner CANNOT join a queue
+    const ownerJoin = await api(`/queues/${qOwn.body.id}/join`, { method: 'POST', body: { name: 'Owner Self' }, token: ownerToken });
+    assert.equal(ownerJoin.status, 403, 'Owner cannot join queue as customer');
+
+    // 4. Register a Customer
+    const custRes = await api('/auth/register', {
+      method: 'POST',
+      body: { email: `cust_test_${Date.now()}@queue.io`, password: 'Password123!', name: 'Customer Bob', role: 'Customer' },
+    });
+    assert.equal(custRes.status, 201);
+    const custToken = custRes.body.idToken;
+
+    // 5. Customer CANNOT create queue
+    const custCreate = await api('/queues', { method: 'POST', body: { name: 'Bobs Queue' }, token: custToken });
+    assert.equal(custCreate.status, 403, 'Customer cannot create a queue');
+
+    // 6. Customer CAN join queue
+    const custJoin = await api(`/queues/${qOwn.body.id}/join`, { method: 'POST', body: { name: 'Bob' }, token: custToken });
+    assert.equal(custJoin.status, 201, 'Customer can join queue');
   });
 
   await test('queues idle for more than 7 days are deleted with their tickets', async () => {

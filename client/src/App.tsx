@@ -76,14 +76,14 @@ function AuthModal({ onClose }: { onClose: () => void }) {
           {tab === 'register' && (
             <>
               <label>Select Your Role</label>
-              <div className="role-pill-group">
+              <div className="role-pill-group" style={{ gridTemplateColumns: '1fr 1fr' }}>
                 <div
                   className={`role-pill ${role === 'Owner' ? 'selected' : ''}`}
                   onClick={() => setRole('Owner')}
                   role="button"
                   tabIndex={0}
                 >
-                  👑 Owner
+                  👑 Queue Owner
                 </div>
                 <div
                   className={`role-pill ${role === 'Customer' ? 'selected' : ''}`}
@@ -91,15 +91,7 @@ function AuthModal({ onClose }: { onClose: () => void }) {
                   role="button"
                   tabIndex={0}
                 >
-                  👤 Customer
-                </div>
-                <div
-                  className={`role-pill ${role === 'Admin' ? 'selected' : ''}`}
-                  onClick={() => setRole('Admin')}
-                  role="button"
-                  tabIndex={0}
-                >
-                  ⚡ Admin
+                  👤 Customer / Patient
                 </div>
               </div>
 
@@ -269,50 +261,127 @@ function Home() {
         </p>
       </section>
 
-      {myQueues.length > 0 && (
-        <section className="panel">
-          <h2>Your Queues</h2>
-          <div className="row">
-            {myQueues.map((q) => (
-              <a
-                key={q.id}
-                href={`#/owner/${q.id}`}
-                className="btn-sm secondary"
-                style={{ textDecoration: 'none', padding: '10px 14px', border: '1px solid var(--accent)', borderRadius: '6px' }}
-              >
-                <strong>{q.name}</strong> ({q.id}) — Now serving: #{q.nowServing || 'None'}
-              </a>
-            ))}
+      {/* Admin Experience: Supervise only, cannot create or join */}
+      {user?.role === 'Admin' && (
+        <section className="panel" style={{ borderLeft: '4px solid var(--warn)', margin: '24px 0' }}>
+          <h2>⚡ System Administrator</h2>
+          <p className="muted">
+            You are signed in as the system admin. Administrators supervise all queues across the platform via the
+            Admin Console and do not create or join individual queues.
+          </p>
+          <div style={{ marginTop: '16px' }}>
+            <a
+              href="#/admin"
+              className="primary"
+              style={{ display: 'inline-block', textDecoration: 'none', padding: '10px 20px', borderRadius: '4px' }}
+            >
+              Open Admin Console
+            </a>
           </div>
         </section>
       )}
 
-      <section className="split">
-        <form onSubmit={create} className="panel">
-          <h2>Run a queue</h2>
-          <label htmlFor="qn">Queue name</label>
-          <input id="qn" value={name} onChange={(e) => { setName(e.target.value); setErr(''); }} maxLength={60} placeholder="Example: Morning OPD" />
-          {err && <p className="error" role="alert">{err}</p>}
-          <button className="primary" disabled={busy}>Create queue</button>
-        </form>
-        <form onSubmit={join} className="panel">
+      {/* Owner Experience: Can create and manage, cannot join */}
+      {user?.role === 'Owner' && (
+        <>
+          {myQueues.length > 0 && (
+            <section className="panel">
+              <h2>Your Active Queues</h2>
+              <div className="row">
+                {myQueues.map((q) => (
+                  <a
+                    key={q.id}
+                    href={`#/owner/${q.id}`}
+                    className="btn-sm secondary"
+                    style={{ textDecoration: 'none', padding: '10px 14px', border: '1px solid var(--accent)', borderRadius: '6px' }}
+                  >
+                    <strong>{q.name}</strong> ({q.id}) — Now serving: #{q.nowServing || 'None'}
+                  </a>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section className="panel" style={{ maxWidth: '520px', margin: '24px auto' }}>
+            <h2>Create a new queue</h2>
+            <p className="muted">Set up a virtual queue for your clinic, salon, or office counter.</p>
+            <form onSubmit={create}>
+              <label htmlFor="qn">Queue name</label>
+              <input
+                id="qn"
+                value={name}
+                onChange={(e) => { setName(e.target.value); setErr(''); }}
+                maxLength={60}
+                placeholder="Example: Morning OPD / Hair Studio"
+              />
+              {err && <p className="error" role="alert">{err}</p>}
+              <button className="primary" style={{ width: '100%' }} disabled={busy}>
+                Create queue
+              </button>
+            </form>
+          </section>
+        </>
+      )}
+
+      {/* Customer Experience: Can only join queues */}
+      {user?.role === 'Customer' && (
+        <section className="panel" style={{ maxWidth: '480px', margin: '24px auto' }}>
           <h2>Join a queue</h2>
-          <label htmlFor="qc">Queue code</label>
-          <input
-            id="qc"
-            value={code}
-            onChange={(e) => {
-              setCode(e.target.value.toUpperCase());
-              setJoinErr('');
-            }}
-            maxLength={6}
-            placeholder="6 characters"
-            autoCapitalize="characters"
-          />
-          {joinErr && <p className="error" role="alert">{joinErr}</p>}
-          <button className="secondary">Open queue</button>
-        </form>
-      </section>
+          <p className="muted">
+            Signed in as <strong>{user.name}</strong> (Customer). Enter the 6-character queue code from your clinic or shop counter.
+          </p>
+          <form onSubmit={join}>
+            <label htmlFor="qc">Queue code</label>
+            <input
+              id="qc"
+              value={code}
+              onChange={(e) => { setCode(e.target.value.toUpperCase()); setJoinErr(''); }}
+              maxLength={6}
+              placeholder="6 characters (e.g. ABC123)"
+              autoCapitalize="characters"
+            />
+            {joinErr && <p className="error" role="alert">{joinErr}</p>}
+            <button className="primary" style={{ width: '100%' }}>
+              Join queue
+            </button>
+          </form>
+        </section>
+      )}
+
+      {/* Guest / Visitor Experience: Join a queue or sign in as Owner to create */}
+      {!user && (
+        <section className="split">
+          <form onSubmit={create} className="panel">
+            <h2>Run a queue</h2>
+            <p className="muted" style={{ fontSize: '0.85rem' }}>For clinic & shop owners.</p>
+            <label htmlFor="qn">Queue name</label>
+            <input
+              id="qn"
+              value={name}
+              onChange={(e) => { setName(e.target.value); setErr(''); }}
+              maxLength={60}
+              placeholder="Example: Morning OPD"
+            />
+            {err && <p className="error" role="alert">{err}</p>}
+            <button className="primary" disabled={busy}>Create queue</button>
+          </form>
+          <form onSubmit={join} className="panel">
+            <h2>Join a queue</h2>
+            <p className="muted" style={{ fontSize: '0.85rem' }}>For customers & patients.</p>
+            <label htmlFor="qc">Queue code</label>
+            <input
+              id="qc"
+              value={code}
+              onChange={(e) => { setCode(e.target.value.toUpperCase()); setJoinErr(''); }}
+              maxLength={6}
+              placeholder="6 characters"
+              autoCapitalize="characters"
+            />
+            {joinErr && <p className="error" role="alert">{joinErr}</p>}
+            <button className="secondary">Open queue</button>
+          </form>
+        </section>
+      )}
     </>
   );
 }
@@ -469,7 +538,40 @@ function Customer({ id }: { id: string }) {
       <h1>{state.name}</h1>
       <p className="muted">Now serving: {state.nowServing ? `number ${state.nowServing}` : 'nobody yet'}</p>
       {state.paused && <p className="error" role="status">This queue is paused. New numbers are paused and calls are on hold.</p>}
-      {!ticket ? (
+      {user?.role === 'Owner' ? (
+        <div className="panel" style={{ borderLeft: '4px solid var(--warn)', margin: '16px 0' }}>
+          <p><strong>Queue Owners cannot join queues as customers.</strong></p>
+          <p className="muted">You are signed in as a Queue Owner. Owners create and manage queues.</p>
+          <a
+            href={`#/owner/${id}`}
+            className="primary"
+            style={{ display: 'inline-block', textDecoration: 'none', padding: '10px 18px', borderRadius: '4px', marginTop: '8px' }}
+          >
+            Open Owner Dashboard
+          </a>
+        </div>
+      ) : user?.role === 'Admin' ? (
+        <div className="panel" style={{ borderLeft: '4px solid var(--warn)', margin: '16px 0' }}>
+          <p><strong>Administrators cannot join queues.</strong></p>
+          <p className="muted">Administrators supervise all queues from the Admin Console.</p>
+          <div className="row" style={{ marginTop: '8px' }}>
+            <a
+              href="#/admin"
+              className="primary"
+              style={{ display: 'inline-block', textDecoration: 'none', padding: '10px 18px', borderRadius: '4px' }}
+            >
+              Open Admin Console
+            </a>
+            <a
+              href={`#/owner/${id}`}
+              className="secondary"
+              style={{ display: 'inline-block', textDecoration: 'none', padding: '10px 18px', borderRadius: '4px' }}
+            >
+              Inspect Queue
+            </a>
+          </div>
+        </div>
+      ) : !ticket ? (
         <form onSubmit={join}>
           {user && (
             <p className="muted" style={{ fontSize: '0.85rem', marginBottom: '10px' }}>
@@ -590,6 +692,15 @@ function Owner({ id }: { id: string }) {
     } catch {}
   }
 
+  if (user?.role === 'Customer') {
+    return (
+      <section className="panel">
+        <h1>Owner access denied</h1>
+        <p>Customers and patients cannot manage or run queues. You are signed in as a Customer.</p>
+        <a href={`#/q/${id}`}>Return to Customer Queue View</a>
+      </section>
+    );
+  }
   if (key === undefined && !user) return <p>Loading</p>;
   if (key === null && (!user || (user.role !== 'Admin' && user.role !== 'Owner'))) {
     return (
@@ -680,9 +791,20 @@ type AdminQueueItem = {
 };
 
 function AdminConsole() {
+  const user = getCurrentUser();
   const [queues, setQueues] = useState<AdminQueueItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
+
+  if (user?.role !== 'Admin') {
+    return (
+      <section className="panel">
+        <h1>Admin access required</h1>
+        <p>This console is strictly reserved for the designated system administrator. Please sign in as Admin.</p>
+        <a href="#/">Back to home</a>
+      </section>
+    );
+  }
 
   async function load() {
     setLoading(true);

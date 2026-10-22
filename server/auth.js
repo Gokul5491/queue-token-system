@@ -90,7 +90,12 @@ export function requireRole(...allowedRoles) {
  * Register a new user in Cognito, confirm email, set password, and assign group
  */
 export async function registerUser({ email, password, name, role = 'Customer' }) {
-  const validRole = ['Admin', 'Owner', 'Customer'].includes(role) ? role : 'Customer';
+  if (role === 'Admin') {
+    const err = new Error('Admin accounts cannot be self-registered. There is a single designated platform admin.');
+    err.statusCode = 403;
+    throw err;
+  }
+  const validRole = role === 'Owner' ? 'Owner' : 'Customer';
 
   // 1. Create user
   await cognitoClient.send(

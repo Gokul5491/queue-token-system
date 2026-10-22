@@ -105,11 +105,15 @@ app.post('/api/auth/register', authLimiter, route(async (req, res) => {
   const { email, password, name, role } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
   if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  const requestedRole = clean(role, 20);
+  if (requestedRole === 'Admin') {
+    return res.status(403).json({ error: 'Admin accounts cannot be self-registered. There is a single designated platform admin.' });
+  }
   const result = await registerUser({
     email: String(email).trim().toLowerCase(),
     password: String(password),
     name: clean(name, 50),
-    role: clean(role, 20),
+    role: requestedRole === 'Owner' ? 'Owner' : 'Customer',
   });
   res.status(201).json(result);
 }));
@@ -136,6 +140,14 @@ app.get('/api/auth/me', (req, res) => {
 app.post('/api/queues', createQueueLimiter, route(async (req, res) => {
   const name = clean(req.body?.name, 60);
   if (!name) return res.status(400).json({ error: 'Enter a name for the queue' });
+  if (req.user) {
+    if (req.user.role === 'Admin') {
+      return res.status(403).json({ error: 'Admins cannot create queues. Queue creation is reserved for Owners.' });
+    }
+    if (req.user.role === 'Customer') {
+      return res.status(403).json({ error: 'Customers and patients cannot create queues. Please sign in as a Queue Owner.' });
+    }
+  }
   const ownerId = req.user?.id || null;
   const ownerEmail = req.user?.email || null;
   res.status(201).json(await db.createQueue(name, ownerId, ownerEmail));
@@ -160,6 +172,14 @@ app.get('/api/queues/:id/tickets/:number', route(async (req, res) => {
 app.post('/api/queues/:id/join', joinQueueLimiter, route(async (req, res) => {
   const id = idOf(req);
   if (!ID_RE.test(id)) return notFound(res);
+  if (req.user) {
+    if (req.user.role === 'Admin') {
+      return res.status(403).json({ error: 'Admins cannot join queues. Admins oversee queues via the Admin Console.' });
+    }
+    if (req.user.role === 'Owner') {
+      return res.status(403).json({ error: 'Queue Owners cannot join queues as customers. Only Customers and patients can join.' });
+    }
+  }
   const name = clean(req.body?.name, 40) || req.user?.name || '';
   if (!name) return res.status(400).json({ error: 'Enter your name' });
   const customerId = req.user?.id || null;
