@@ -19,12 +19,20 @@ function useRoute() {
   return hash.replace(/^#/, '').split('/').filter(Boolean);
 }
 
-function AuthModal({ onClose }: { onClose: () => void }) {
-  const [tab, setTab] = useState<'login' | 'register'>('login');
+function AuthModal({
+  onClose,
+  initialTab = 'login',
+  initialRole = 'Owner',
+}: {
+  onClose: () => void;
+  initialTab?: 'login' | 'register';
+  initialRole?: UserRole;
+}) {
+  const [tab, setTab] = useState<'login' | 'register'>(initialTab);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [role, setRole] = useState<UserRole>('Owner');
+  const [role, setRole] = useState<UserRole>(initialRole);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -152,10 +160,21 @@ function AuthModal({ onClose }: { onClose: () => void }) {
 
 function Shell({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(getCurrentUser());
-  const [showAuth, setShowAuth] = useState(false);
+  const [authConfig, setAuthConfig] = useState<{ open: boolean; tab?: 'login' | 'register'; role?: UserRole }>({
+    open: false,
+  });
 
   useEffect(() => {
     return subscribeAuth(setUser);
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ tab?: 'login' | 'register'; role?: UserRole }>).detail || {};
+      setAuthConfig({ open: true, tab: detail.tab || 'login', role: detail.role || 'Owner' });
+    };
+    window.addEventListener('open-auth-modal', handler);
+    return () => window.removeEventListener('open-auth-modal', handler);
   }, []);
 
   return (
@@ -183,7 +202,10 @@ function Shell({ children }: { children: React.ReactNode }) {
                 <button className="btn-sm secondary" onClick={logout}>Sign out</button>
               </>
             ) : (
-              <button className="btn-sm primary" onClick={() => setShowAuth(true)}>
+              <button
+                className="btn-sm primary"
+                onClick={() => setAuthConfig({ open: true, tab: 'login', role: 'Owner' })}
+              >
                 Sign In / Register
               </button>
             )}
@@ -191,7 +213,13 @@ function Shell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
       <main>{children}</main>
-      {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
+      {authConfig.open && (
+        <AuthModal
+          onClose={() => setAuthConfig({ open: false })}
+          initialTab={authConfig.tab}
+          initialRole={authConfig.role}
+        />
+      )}
       <footer className="foot">
         <a href="/privacy.html">Privacy policy</a>
         <a href="/terms.html">Terms and conditions</a>
@@ -351,34 +379,45 @@ function Home() {
       {/* Guest / Visitor Experience: Join a queue or sign in as Owner to create */}
       {!user && (
         <section className="split">
-          <form onSubmit={create} className="panel">
-            <h2>Run a queue</h2>
-            <p className="muted" style={{ fontSize: '0.85rem' }}>For clinic & shop owners.</p>
-            <label htmlFor="qn">Queue name</label>
-            <input
-              id="qn"
-              value={name}
-              onChange={(e) => { setName(e.target.value); setErr(''); }}
-              maxLength={60}
-              placeholder="Example: Morning OPD"
-            />
-            {err && <p className="error" role="alert">{err}</p>}
-            <button className="primary" disabled={busy}>Create queue</button>
-          </form>
+          <div className="panel" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+            <div>
+              <h2>Run a queue</h2>
+              <p className="muted" style={{ fontSize: '0.85rem', marginBottom: '14px' }}>For clinic & shop owners.</p>
+              <div style={{ background: 'var(--panel-alt, #f8fafc)', border: '1px dashed var(--line, #cbd5e1)', borderRadius: '8px', padding: '14px', marginBottom: '16px' }}>
+                <p style={{ margin: 0, fontSize: '0.875rem', lineHeight: '1.5' }}>
+                  🔒 <strong>Owner Account Required</strong>
+                  <br />
+                  Queue creation is reserved for registered Queue Owners. Sign in or create an Owner account to manage your queues.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="primary"
+              style={{ width: '100%' }}
+              onClick={() => window.dispatchEvent(new CustomEvent('open-auth-modal', { detail: { tab: 'login', role: 'Owner' } }))}
+            >
+              👑 Sign In as Owner to Create Queue
+            </button>
+          </div>
+
           <form onSubmit={join} className="panel">
             <h2>Join a queue</h2>
-            <p className="muted" style={{ fontSize: '0.85rem' }}>For customers & patients.</p>
+            <p className="muted" style={{ fontSize: '0.85rem' }}>For customers & patients (no account required).</p>
             <label htmlFor="qc">Queue code</label>
             <input
               id="qc"
               value={code}
               onChange={(e) => { setCode(e.target.value.toUpperCase()); setJoinErr(''); }}
               maxLength={6}
-              placeholder="6 characters"
+              placeholder="6 characters (e.g. ABC123)"
               autoCapitalize="characters"
             />
             {joinErr && <p className="error" role="alert">{joinErr}</p>}
-            <button className="secondary">Open queue</button>
+            <button className="secondary" style={{ width: '100%', marginTop: '12px' }}>Open queue</button>
+            <p className="muted" style={{ fontSize: '0.8rem', marginTop: '12px', textAlign: 'center' }}>
+              Guests can join directly, or <a href="#" onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent('open-auth-modal', { detail: { tab: 'login', role: 'Customer' } })); }}>sign in as a customer</a> to save your history.
+            </p>
           </form>
         </section>
       )}
@@ -573,9 +612,13 @@ function Customer({ id }: { id: string }) {
         </div>
       ) : !ticket ? (
         <form onSubmit={join}>
-          {user && (
+          {user ? (
             <p className="muted" style={{ fontSize: '0.85rem', marginBottom: '10px' }}>
-              Cognito Account: <strong>{user.name}</strong> ({user.role})
+              👤 Signed in as: <strong>{user.name}</strong> ({user.role})
+            </p>
+          ) : (
+            <p className="muted" style={{ fontSize: '0.85rem', marginBottom: '10px' }}>
+              Joining as guest. (You can also <a href="#" onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent('open-auth-modal', { detail: { tab: 'login', role: 'Customer' } })); }}>sign in</a> if you have an account).
             </p>
           )}
           <label htmlFor="cn">Your name</label>

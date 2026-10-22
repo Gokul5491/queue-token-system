@@ -78,9 +78,23 @@ const rawDb = rawClient.db();
 try {
   await startServer();
   let id, key, customer, ownerSocket;
+  let ownerToken;
 
-  await test('owner creates a queue', async () => {
-    const r = await api('/queues', { method: 'POST', body: { name: 'Morning OPD' } });
+  await test('unauthenticated queue creation is rejected', async () => {
+    const r = await api('/queues', { method: 'POST', body: { name: 'Anonymous Queue' } });
+    assert.equal(r.status, 401, 'Queue creation without sign-in must return HTTP 401');
+    assert.ok(r.body.error.includes('sign in as a Queue Owner'));
+  });
+
+  await test('owner registers and creates a queue', async () => {
+    const reg = await api('/auth/register', {
+      method: 'POST',
+      body: { email: `e2e_owner_${Date.now()}@queue.io`, password: 'Password123!', name: 'Dr. Sarah', role: 'Owner' },
+    });
+    assert.equal(reg.status, 201);
+    ownerToken = reg.body.idToken;
+
+    const r = await api('/queues', { method: 'POST', body: { name: 'Morning OPD' }, token: ownerToken });
     assert.equal(r.status, 201);
     assert.match(r.body.id, /^[A-Z0-9]{6}$/);
     ({ id, ownerKey: key } = r.body);
@@ -89,7 +103,7 @@ try {
   });
 
   await test('input is validated', async () => {
-    assert.equal((await api('/queues', { method: 'POST', body: { name: '  ' } })).status, 400);
+    assert.equal((await api('/queues', { method: 'POST', body: { name: '  ' }, token: ownerToken })).status, 400);
     assert.equal((await api(`/queues/${id}/join`, { method: 'POST', body: { name: '' } })).status, 400);
     assert.equal((await api('/queues/NOPE12')).status, 404);
     assert.equal((await api('/queues/bad')).status, 404);
@@ -173,7 +187,7 @@ try {
   });
 
   await test('25 simultaneous joins get unique, gapless numbers', async () => {
-    const q = (await api('/queues', { method: 'POST', body: { name: 'Rush' } })).body;
+    const q = (await api('/queues', { method: 'POST', body: { name: 'Rush' }, token: ownerToken })).body;
     const rs = await Promise.all(
       Array.from({ length: 25 }, (_, i) => api(`/queues/${q.id}/join`, { method: 'POST', body: { name: 'C' + i } }))
     );
@@ -183,7 +197,7 @@ try {
   });
 
   await test('concurrent owner actions (simultaneous call/skip) are handled safely', async () => {
-    const cq = (await api('/queues', { method: 'POST', body: { name: 'Concurrent' } })).body;
+    const cq = (await api('/queues', { method: 'POST', body: { name: 'Concurrent' }, token: ownerToken })).body;
     await Promise.all([
       api(`/queues/${cq.id}/join`, { method: 'POST', body: { name: 'User1' } }),
       api(`/queues/${cq.id}/join`, { method: 'POST', body: { name: 'User2' } }),
@@ -242,7 +256,7 @@ try {
     const adminCreate = await api('/queues', { method: 'POST', body: { name: 'Admin Queue' }, token: adminToken });
     assert.equal(adminCreate.status, 403, 'Admin must not be allowed to create a queue');
 
-    const qTest = (await api('/queues', { method: 'POST', body: { name: 'Supervised Queue' } })).body;
+    const qTest = (await api('/queues', { method: 'POST', body: { name: 'Supervised Queue' }, token: ownerToken })).body;
     const adminJoin = await api(`/queues/${qTest.id}/join`, { method: 'POST', body: { name: 'Admin' }, token: adminToken });
     assert.equal(adminJoin.status, 403, 'Admin must not be allowed to join a queue');
 

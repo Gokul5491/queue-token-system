@@ -140,16 +140,17 @@ app.get('/api/auth/me', (req, res) => {
 app.post('/api/queues', createQueueLimiter, route(async (req, res) => {
   const name = clean(req.body?.name, 60);
   if (!name) return res.status(400).json({ error: 'Enter a name for the queue' });
-  if (req.user) {
-    if (req.user.role === 'Admin') {
-      return res.status(403).json({ error: 'Admins cannot create queues. Queue creation is reserved for Owners.' });
-    }
-    if (req.user.role === 'Customer') {
-      return res.status(403).json({ error: 'Customers and patients cannot create queues. Please sign in as a Queue Owner.' });
-    }
+  if (!req.user) {
+    return res.status(401).json({ error: 'Authentication required. Please sign in as a Queue Owner to create a queue.' });
   }
-  const ownerId = req.user?.id || null;
-  const ownerEmail = req.user?.email || null;
+  if (req.user.role === 'Admin') {
+    return res.status(403).json({ error: 'Admins cannot create queues. Queue creation is reserved for Owners.' });
+  }
+  if (req.user.role !== 'Owner') {
+    return res.status(403).json({ error: 'Customers and patients cannot create queues. Please sign in as a Queue Owner.' });
+  }
+  const ownerId = req.user.id;
+  const ownerEmail = req.user.email;
   res.status(201).json(await db.createQueue(name, ownerId, ownerEmail));
 }));
 
