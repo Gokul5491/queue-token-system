@@ -8,6 +8,8 @@
     "smoke": "node --env-file-if-exists=.env test/smoke.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.1155.0",
+    "aws-jwt-verify": "^5.2.1",
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "express-rate-limit": "^8.7.1",

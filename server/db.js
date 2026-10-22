@@ -21,7 +21,7 @@ export async function migrate() {
   await queues.createIndex({ last_activity: 1 });
 }
 
-export async function createQueue(name) {
+export async function createQueue(name, ownerId = null, ownerEmail = null) {
   const ownerKey = crypto.randomBytes(16).toString('hex');
   for (let i = 0; i < 5; i++) {
     const id = newId();
@@ -30,6 +30,8 @@ export async function createQueue(name) {
         _id: id,
         id,
         name,
+        owner_id: ownerId,
+        owner_email: ownerEmail,
         owner_key_hash: hashKey(ownerKey),
         paused: false,
         now_serving: 0,
@@ -114,15 +116,33 @@ export async function publicState(id) {
   };
 }
 
-export async function checkOwner(id, key) {
+export async function checkOwner(id, key, user = null) {
   const q = await queues.findOne({ id });
   if (!q) return 'missing';
-  const a = Buffer.from(hashKey(key));
-  const b = Buffer.from(q.owner_key_hash);
-  return a.length === b.length && crypto.timingSafeEqual(a, b) ? 'ok' : 'denied';
+
+  // 1. AWS Cognito authenticated user verification
+  if (user) {
+    if (user.role === 'Admin' || user.groups?.includes('Admin')) {
+      return 'ok';
+    }
+    if (q.owner_id && user.id && q.owner_id === user.id) {
+      return 'ok';
+    }
+  }
+
+  // 2. Owner key hash fallback
+  if (key) {
+    const a = Buffer.from(hashKey(key));
+    const b = Buffer.from(q.owner_key_hash);
+    if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+      return 'ok';
+    }
+  }
+
+  return 'denied';
 }
 
-export async function joinQueue(id, name) {
+export async function joinQueue(id, name, customerId = null, customerEmail = null) {
   const q = await queues.findOne({ id });
   if (!q) return { error: 'not_found' };
   if (q.paused) return { error: 'paused' };
@@ -143,6 +163,8 @@ export async function joinQueue(id, name) {
     queue_id: id,
     number: num,
     name,
+    customer_id: customerId,
+    customer_email: customerEmail,
     status: 'waiting',
     service_minutes: null,
     created_at: new Date(),
@@ -279,4 +301,41 @@ export async function purgeOld() {
   await tickets.deleteMany({ queue_id: { $in: ids } });
   const r = await queues.deleteMany({ id: { $in: ids } });
   return r.deletedCount;
+}
+
+export async function listOwnerQueues(ownerId) {
+  const list = await queues
+    .find({ owner_id: ownerId })
+    .sort({ last_activity: -1 })
+    .toArray();
+  return list.map((q) => ({ id: q.id, name: q.name, paused: q.paused, nowServing: q.now_serving }));
+}
+
+export async function listAllQueues() {
+  const all = await queues.find({}).sort({ last_activity: -1 }).toArray();
+  const results = [];
+  for (const q of all) {
+    const waiting = await tickets.countDocuments({ queue_id: q.id, status: 'waiting' });
+    const served = await tickets.countDocuments({ queue_id: q.id, status: 'served' });
+    const skipped = await tickets.countDocuments({ queue_id: q.id, status: 'skipped' });
+    results.push({
+      id: q.id,
+      name: q.name,
+      ownerEmail: q.owner_email || 'Legacy / Anonymous',
+      ownerId: q.owner_id || null,
+      paused: q.paused,
+      nowServing: q.now_serving,
+      waiting,
+      served,
+      skipped,
+      lastActivity: q.last_activity,
+    });
+  }
+  return results;
+}
+
+export async function deleteQueue(id) {
+  await tickets.deleteMany({ queue_id: id });
+  const r = await queues.deleteOne({ id });
+  return r.deletedCount > 0;
 }

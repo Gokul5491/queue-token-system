@@ -22,7 +22,15 @@ export type QState = {
 };
 
 export async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
-  const r = await fetch(API + path, { ...opts, headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) } });
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('cognito_id_token') : null;
+  const headers = new Headers(opts.headers);
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  const r = await fetch(API + path, { ...opts, headers });
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error((body as { error?: string }).error || 'Request failed');
   return body as T;

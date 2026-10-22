@@ -5,6 +5,9 @@ import { CONTACT_EMAIL, PRODUCT_NAME } from './config';
 import { idbGet, idbSet } from './idb';
 import { ticketStatus } from './status';
 import { useQueue } from './useQueue';
+import { AuthUser, UserRole, getCurrentUser, initAuth, login, logout, register, subscribeAuth } from './auth';
+
+initAuth();
 
 function useRoute() {
   const [hash, setHash] = useState(location.hash || '#/');
@@ -16,13 +19,187 @@ function useRoute() {
   return hash.replace(/^#/, '').split('/').filter(Boolean);
 }
 
+function AuthModal({ onClose }: { onClose: () => void }) {
+  const [tab, setTab] = useState<'login' | 'register'>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [role, setRole] = useState<UserRole>('Owner');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setErr('');
+    setBusy(true);
+    try {
+      if (tab === 'login') {
+        await login(email, password);
+      } else {
+        await register(email, password, name, role);
+      }
+      onClose();
+    } catch (x) {
+      setErr((x as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function fillDemoAdmin() {
+    setEmail('admin@queue.io');
+    setPassword('Admin123!');
+    setTab('login');
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose} role="dialog" aria-modal="true">
+      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-tabs">
+          <button
+            type="button"
+            className={`modal-tab ${tab === 'login' ? 'active' : ''}`}
+            onClick={() => { setTab('login'); setErr(''); }}
+          >
+            Sign In
+          </button>
+          <button
+            type="button"
+            className={`modal-tab ${tab === 'register' ? 'active' : ''}`}
+            onClick={() => { setTab('register'); setErr(''); }}
+          >
+            Create Account
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          {tab === 'register' && (
+            <>
+              <label>Select Your Role</label>
+              <div className="role-pill-group">
+                <div
+                  className={`role-pill ${role === 'Owner' ? 'selected' : ''}`}
+                  onClick={() => setRole('Owner')}
+                  role="button"
+                  tabIndex={0}
+                >
+                  👑 Owner
+                </div>
+                <div
+                  className={`role-pill ${role === 'Customer' ? 'selected' : ''}`}
+                  onClick={() => setRole('Customer')}
+                  role="button"
+                  tabIndex={0}
+                >
+                  👤 Customer
+                </div>
+                <div
+                  className={`role-pill ${role === 'Admin' ? 'selected' : ''}`}
+                  onClick={() => setRole('Admin')}
+                  role="button"
+                  tabIndex={0}
+                >
+                  ⚡ Admin
+                </div>
+              </div>
+
+              <label htmlFor="auth-name">Your Full Name</label>
+              <input
+                id="auth-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                placeholder="e.g. Dr. Sarah / Gokul"
+              />
+            </>
+          )}
+
+          <label htmlFor="auth-email">Email Address</label>
+          <input
+            id="auth-email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            placeholder="you@example.com"
+          />
+
+          <label htmlFor="auth-pass">Password</label>
+          <input
+            id="auth-pass"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            minLength={6}
+            placeholder="Min 6 characters"
+          />
+
+          {err && <p className="error" role="alert">{err}</p>}
+
+          <div className="row" style={{ marginTop: '16px', justifyContent: 'space-between' }}>
+            <button className="primary" disabled={busy}>
+              {busy ? 'Connecting...' : tab === 'login' ? 'Sign In' : 'Create Account'}
+            </button>
+            <button type="button" className="secondary" onClick={onClose}>
+              Cancel
+            </button>
+          </div>
+        </form>
+
+        <div style={{ marginTop: '20px', paddingTop: '14px', borderTop: '1px solid var(--line)', fontSize: '0.85rem', textAlign: 'center' }}>
+          <p className="muted" style={{ margin: '0 0 8px' }}>AWS Cognito Demo Access:</p>
+          <button type="button" className="btn-link" onClick={fillDemoAdmin}>
+            ⚡ Auto-fill Default Admin (admin@queue.io)
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<AuthUser | null>(getCurrentUser());
+  const [showAuth, setShowAuth] = useState(false);
+
+  useEffect(() => {
+    return subscribeAuth(setUser);
+  }, []);
+
   return (
     <>
       <header className="bar">
-        <a href="#/" className="brand">{PRODUCT_NAME}</a>
+        <div className="bar-inner">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <a href="#/" className="brand">{PRODUCT_NAME}</a>
+            {user?.role === 'Admin' && (
+              <a href="#/admin" style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--warn)' }}>
+                ⚡ Admin Console
+              </a>
+            )}
+          </div>
+          <div className="auth-nav">
+            {user ? (
+              <>
+                <span className={`auth-badge badge-${user.role.toLowerCase()}`}>
+                  {user.role === 'Owner' && '👑 '}
+                  {user.role === 'Customer' && '👤 '}
+                  {user.role === 'Admin' && '⚡ '}
+                  {user.role}
+                </span>
+                <span style={{ fontWeight: 600 }}>{user.name}</span>
+                <button className="btn-sm secondary" onClick={logout}>Sign out</button>
+              </>
+            ) : (
+              <button className="btn-sm primary" onClick={() => setShowAuth(true)}>
+                Sign In / Register
+              </button>
+            )}
+          </div>
+        </div>
       </header>
       <main>{children}</main>
+      {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
       <footer className="foot">
         <a href="/privacy.html">Privacy policy</a>
         <a href="/terms.html">Terms and conditions</a>
@@ -38,6 +215,22 @@ function Home() {
   const [err, setErr] = useState('');
   const [joinErr, setJoinErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [user, setUser] = useState<AuthUser | null>(getCurrentUser());
+  const [myQueues, setMyQueues] = useState<{ id: string; name: string; paused: boolean; nowServing: number }[]>([]);
+
+  useEffect(() => {
+    return subscribeAuth(setUser);
+  }, []);
+
+  useEffect(() => {
+    if (user?.role === 'Owner') {
+      req<{ queues: typeof myQueues }>('/api/owner/queues')
+        .then((r) => setMyQueues(r.queues))
+        .catch(() => {});
+    } else {
+      setMyQueues([]);
+    }
+  }, [user]);
 
   async function create(e: FormEvent) {
     e.preventDefault();
@@ -75,6 +268,25 @@ function Home() {
           with live wait estimates. The owner runs the line from any browser.
         </p>
       </section>
+
+      {myQueues.length > 0 && (
+        <section className="panel">
+          <h2>Your Queues</h2>
+          <div className="row">
+            {myQueues.map((q) => (
+              <a
+                key={q.id}
+                href={`#/owner/${q.id}`}
+                className="btn-sm secondary"
+                style={{ textDecoration: 'none', padding: '10px 14px', border: '1px solid var(--accent)', borderRadius: '6px' }}
+              >
+                <strong>{q.name}</strong> ({q.id}) — Now serving: #{q.nowServing || 'None'}
+              </a>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="split">
         <form onSubmit={create} className="panel">
           <h2>Run a queue</h2>
@@ -182,12 +394,17 @@ function StatsChart({ history }: { history?: QHistoryItem[] }) {
 function Customer({ id }: { id: string }) {
   const { state, live, updatedAt, notFound, loadError, applyState } = useQueue(id);
   const [ticket, setTicket] = useState<{ number: number } | null | undefined>(undefined);
-  const [name, setName] = useState('');
+  const user = getCurrentUser();
+  const [name, setName] = useState(user?.name || '');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [notifGranted, setNotifGranted] = useState(
     typeof Notification !== 'undefined' && Notification.permission === 'granted'
   );
+
+  useEffect(() => {
+    if (user?.name && !name) setName(user.name);
+  }, [user]);
 
   useEffect(() => { idbGet<{ number: number }>('ticket:' + id).then((t) => setTicket(t ?? null)); }, [id]);
 
@@ -254,6 +471,11 @@ function Customer({ id }: { id: string }) {
       {state.paused && <p className="error" role="status">This queue is paused. New numbers are paused and calls are on hold.</p>}
       {!ticket ? (
         <form onSubmit={join}>
+          {user && (
+            <p className="muted" style={{ fontSize: '0.85rem', marginBottom: '10px' }}>
+              Cognito Account: <strong>{user.name}</strong> ({user.role})
+            </p>
+          )}
           <label htmlFor="cn">Your name</label>
           <input id="cn" value={name} onChange={(e) => { setName(e.target.value); setErr(''); }} maxLength={40} />
           {err && <p className="error" role="alert">{err}</p>}
@@ -317,19 +539,28 @@ function Owner({ id }: { id: string }) {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const user = getCurrentUser();
+
+  const isAuthorized = Boolean(key || user?.role === 'Admin' || user?.role === 'Owner');
 
   useEffect(() => { idbGet<string>('owner:' + id).then((k) => setKey(k ?? null)); }, [id]);
   useEffect(() => {
-    if (!key) return;
-    req<{ names: Record<number, string> }>(`/api/queues/${id}/owner`, { headers: { 'x-owner-key': key } })
-      .then((r) => setNames(r.names)).catch(() => {});
-  }, [state, key, id]);
+    if (!isAuthorized) return;
+    req<{ names: Record<number, string> }>(`/api/queues/${id}/owner`, {
+      headers: key ? { 'x-owner-key': key } : {},
+    })
+      .then((r) => setNames(r.names))
+      .catch(() => {});
+  }, [state, key, id, isAuthorized]);
 
   async function act(path: 'next' | 'skip' | 'pause') {
     setErr('');
     setBusy(true);
     try {
-      const updated = await req<QState>(`/api/queues/${id}/${path}`, { method: 'POST', headers: { 'x-owner-key': key || '' } });
+      const updated = await req<QState>(`/api/queues/${id}/${path}`, {
+        method: 'POST',
+        headers: key ? { 'x-owner-key': key } : {},
+      });
       applyState(updated);
     } catch (x) {
       setErr((x as Error).message);
@@ -359,8 +590,16 @@ function Owner({ id }: { id: string }) {
     } catch {}
   }
 
-  if (key === undefined) return <p>Loading</p>;
-  if (key === null) return <section className="panel"><h1>Owner access needed</h1><p>This browser does not have the owner key for this queue. Open the queue from the browser where you created it.</p><a href="#/">Back to start</a></section>;
+  if (key === undefined && !user) return <p>Loading</p>;
+  if (key === null && (!user || (user.role !== 'Admin' && user.role !== 'Owner'))) {
+    return (
+      <section className="panel">
+        <h1>Owner access needed</h1>
+        <p>This browser does not have the owner key for this queue. Please sign in with your Cognito Owner account or open from the browser where you created it.</p>
+        <a href="#/">Back to start</a>
+      </section>
+    );
+  }
   if (notFound) return <section className="panel"><h1>Queue not found</h1><a href="#/">Back to start</a></section>;
   if (!state && loadError) return <section className="panel"><h1>Connection problem</h1><p>{loadError}</p><a href="#/">Back to start</a></section>;
   if (!state) return <p>Loading</p>;
@@ -427,11 +666,111 @@ function Owner({ id }: { id: string }) {
   );
 }
 
+type AdminQueueItem = {
+  id: string;
+  name: string;
+  ownerEmail: string;
+  ownerId?: string | null;
+  paused: boolean;
+  nowServing: number;
+  waiting: number;
+  served: number;
+  skipped: number;
+  lastActivity: string;
+};
+
+function AdminConsole() {
+  const [queues, setQueues] = useState<AdminQueueItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+
+  async function load() {
+    setLoading(true);
+    setErr('');
+    try {
+      const data = await req<{ queues: AdminQueueItem[] }>('/api/admin/queues');
+      setQueues(data.queues);
+    } catch (x) {
+      setErr((x as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function remove(id: string) {
+    if (!confirm(`Delete queue ${id} and all its tickets?`)) return;
+    try {
+      await req(`/api/admin/queues/${id}`, { method: 'DELETE' });
+      setQueues((prev) => prev.filter((q) => q.id !== id));
+    } catch (x) {
+      alert((x as Error).message);
+    }
+  }
+
+  return (
+    <section>
+      <h1>⚡ Admin Console</h1>
+      <p className="muted">Manage all virtual queues across the system with AWS Cognito administrator privileges.</p>
+      {err && <p className="error" role="alert">{err}</p>}
+      {loading ? <p>Loading queues...</p> : (
+        <div className="panel">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <h2>System Queues ({queues.length})</h2>
+            <button className="btn-sm secondary" onClick={load}>Refresh</button>
+          </div>
+          {queues.length === 0 ? <p className="muted">No active queues in the system.</p> : (
+            <div className="admin-table-wrap">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Name</th>
+                    <th>Owner</th>
+                    <th>Status</th>
+                    <th>Serving</th>
+                    <th>Waiting</th>
+                    <th>Served</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {queues.map((q) => (
+                    <tr key={q.id}>
+                      <td><strong>{q.id}</strong></td>
+                      <td>{q.name}</td>
+                      <td><span style={{ fontSize: '0.8rem' }}>{q.ownerEmail}</span></td>
+                      <td>{q.paused ? <span style={{ color: 'var(--warn)' }}>Paused</span> : <span style={{ color: 'var(--accent)' }}>Active</span>}</td>
+                      <td>#{q.nowServing || 'None'}</td>
+                      <td>{q.waiting}</td>
+                      <td>{q.served}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <a href={`#/owner/${q.id}`} className="btn-sm secondary" style={{ textDecoration: 'none' }}>Manage</a>
+                          <button className="btn-sm" style={{ borderColor: 'var(--warn)', color: 'var(--warn)', background: 'transparent' }} onClick={() => remove(q.id)}>Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function App() {
   const r = useRoute();
   return (
     <Shell>
-      {r[0] === 'q' && r[1] ? <Customer id={r[1].toUpperCase()} /> : r[0] === 'owner' && r[1] ? <Owner id={r[1].toUpperCase()} /> : <Home />}
+      {r[0] === 'q' && r[1] ? <Customer id={r[1].toUpperCase()} /> :
+       r[0] === 'owner' && r[1] ? <Owner id={r[1].toUpperCase()} /> :
+       r[0] === 'admin' ? <AdminConsole /> :
+       <Home />}
     </Shell>
   );
 }

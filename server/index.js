@@ -4,6 +4,7 @@ import cors from 'cors';
 import { Server } from 'socket.io';
 import { rateLimit } from 'express-rate-limit';
 import * as db from './db.js';
+import { verifyToken, requireRole, registerUser, loginUser, USER_POOL_ID, CLIENT_ID, REGION } from './auth.js';
 
 if (!process.env.MONGODB_URI && !process.env.DATABASE_URL) {
   console.error('MONGODB_URI is not set. Example: mongodb://localhost:27017/queue');
@@ -24,6 +25,7 @@ const app = express();
 app.set('trust proxy', 1);
 app.use(cors({ origin: ORIGIN }));
 app.use(express.json({ limit: '2kb' }));
+app.use(verifyToken);
 
 // Rate limiters to prevent spam and abuse
 const createQueueLimiter = rateLimit({
@@ -50,6 +52,14 @@ const ownerLimiter = rateLimit({
   message: { error: 'Too many requests. Please slow down.' },
 });
 
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 40,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many auth attempts. Please try again later.' },
+});
+
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: ORIGIN } });
 
@@ -59,12 +69,16 @@ const idOf = (req) => String(req.params.id).toUpperCase();
 const notFound = (res) => res.status(404).json({ error: 'Queue not found' });
 const broadcast = (id, state) => io.to(id).emit('state', state);
 
-// Resolves the queue id and checks the owner key. Returns the id, or null after replying.
+// Resolves the queue id and verifies owner access via Cognito token or owner key
 async function owner(req, res) {
   const id = idOf(req);
-  const result = ID_RE.test(id) ? await db.checkOwner(id, req.get('x-owner-key') || '') : 'missing';
+  if (!ID_RE.test(id)) { notFound(res); return null; }
+  const result = await db.checkOwner(id, req.get('x-owner-key') || '', req.user);
   if (result === 'missing') { notFound(res); return null; }
-  if (result === 'denied') { res.status(401).json({ error: 'Owner key is missing or wrong' }); return null; }
+  if (result === 'denied') {
+    res.status(401).json({ error: 'Owner access required. Please sign in as queue owner or provide owner key.' });
+    return null;
+  }
   return id;
 }
 
@@ -79,13 +93,52 @@ app.get('/', (_req, res) => {
 
 app.get('/health', route(async (_req, res) => {
   await db.db.command({ ping: 1 });
-  res.json({ ok: true, database: 'mongodb' });
+  res.json({ ok: true, database: 'mongodb', cognito: { pool: USER_POOL_ID, region: REGION } });
 }));
+
+// Cognito Auth Endpoints
+app.get('/api/auth/config', (_req, res) => {
+  res.json({ userPoolId: USER_POOL_ID, clientId: CLIENT_ID, region: REGION });
+});
+
+app.post('/api/auth/register', authLimiter, route(async (req, res) => {
+  const { email, password, name, role } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+  if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  const result = await registerUser({
+    email: String(email).trim().toLowerCase(),
+    password: String(password),
+    name: clean(name, 50),
+    role: clean(role, 20),
+  });
+  res.status(201).json(result);
+}));
+
+app.post('/api/auth/login', authLimiter, route(async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+  try {
+    const result = await loginUser({
+      email: String(email).trim().toLowerCase(),
+      password: String(password),
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(401).json({ error: err.message || 'Invalid email or password' });
+  }
+}));
+
+app.get('/api/auth/me', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  res.json({ user: req.user });
+});
 
 app.post('/api/queues', createQueueLimiter, route(async (req, res) => {
   const name = clean(req.body?.name, 60);
   if (!name) return res.status(400).json({ error: 'Enter a name for the queue' });
-  res.status(201).json(await db.createQueue(name));
+  const ownerId = req.user?.id || null;
+  const ownerEmail = req.user?.email || null;
+  res.status(201).json(await db.createQueue(name, ownerId, ownerEmail));
 }));
 
 app.get('/api/queues/:id', route(async (req, res) => {
@@ -107,14 +160,33 @@ app.get('/api/queues/:id/tickets/:number', route(async (req, res) => {
 app.post('/api/queues/:id/join', joinQueueLimiter, route(async (req, res) => {
   const id = idOf(req);
   if (!ID_RE.test(id)) return notFound(res);
-  const name = clean(req.body?.name, 40);
+  const name = clean(req.body?.name, 40) || req.user?.name || '';
   if (!name) return res.status(400).json({ error: 'Enter your name' });
-  const r = await db.joinQueue(id, name);
+  const customerId = req.user?.id || null;
+  const customerEmail = req.user?.email || null;
+  const r = await db.joinQueue(id, name, customerId, customerEmail);
   if (r.error === 'not_found') return notFound(res);
   if (r.error === 'paused') return res.status(409).json({ error: 'This queue is paused' });
   if (r.error === 'full') return res.status(409).json({ error: 'This queue is full' });
   broadcast(id, r.state);
   res.status(201).json({ number: r.number, state: r.state });
+}));
+
+app.get('/api/owner/queues', route(async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+  res.json({ queues: await db.listOwnerQueues(req.user.id) });
+}));
+
+app.get('/api/admin/queues', requireRole('Admin'), route(async (_req, res) => {
+  res.json({ queues: await db.listAllQueues() });
+}));
+
+app.delete('/api/admin/queues/:id', requireRole('Admin'), route(async (req, res) => {
+  const id = idOf(req);
+  if (!ID_RE.test(id)) return notFound(res);
+  const deleted = await db.deleteQueue(id);
+  if (!deleted) return notFound(res);
+  res.json({ success: true, deleted: id });
 }));
 
 app.get('/api/queues/:id/owner', ownerLimiter, route(async (req, res) => {

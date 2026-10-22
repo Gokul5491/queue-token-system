@@ -41,10 +41,14 @@ async function waitFor(fn, label, ms = 3000) {
   }
   throw new Error('Timed out waiting for: ' + label);
 }
-const api = async (path, { method = 'GET', body, key } = {}) => {
+const api = async (path, { method = 'GET', body, key, token } = {}) => {
   const r = await fetch(URL + '/api' + path, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(key ? { 'x-owner-key': key } : {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(key ? { 'x-owner-key': key } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: r.status, body: await r.json() };
@@ -211,6 +215,39 @@ try {
     await api(`/queues/${id}/join`, { method: 'POST', body: { name: 'Post-restart' } });
     await waitFor(() => c.states.length > 0, 'live updates work after restart');
     c.socket.close();
+  });
+
+  await test('AWS Cognito auth: Admin sign-in, queue list, and privileged access', async () => {
+    // 1. Sign in as Admin
+    const authRes = await api('/auth/login', {
+      method: 'POST',
+      body: { email: 'admin@queue.io', password: 'Admin123!' },
+    });
+    assert.equal(authRes.status, 200);
+    assert.ok(authRes.body.idToken);
+    assert.equal(authRes.body.user.role, 'Admin');
+    const adminToken = authRes.body.idToken;
+
+    // 2. Fetch /api/auth/me
+    const meRes = await api('/auth/me', { token: adminToken });
+    assert.equal(meRes.status, 200);
+    assert.equal(meRes.body.user.email, 'admin@queue.io');
+
+    // 3. Access admin queues list
+    const listRes = await api('/admin/queues', { token: adminToken });
+    assert.equal(listRes.status, 200);
+    assert.ok(Array.isArray(listRes.body.queues));
+
+    // 4. Admin can call next on queue without an owner key
+    const qAdmin = (await api('/queues', { method: 'POST', body: { name: 'Admin Managed' } })).body;
+    await api(`/queues/${qAdmin.id}/join`, { method: 'POST', body: { name: 'Patient' } });
+    const nextRes = await api(`/queues/${qAdmin.id}/next`, { method: 'POST', token: adminToken });
+    assert.equal(nextRes.status, 200);
+    assert.equal(nextRes.body.nowServing, 1);
+
+    // 5. Unauthenticated call to /admin/queues is rejected
+    const unauth = await api('/admin/queues');
+    assert.equal(unauth.status, 401);
   });
 
   await test('queues idle for more than 7 days are deleted with their tickets', async () => {

@@ -53,3 +53,36 @@ button:disabled { opacity:.5; cursor:not-allowed; }
 .chart-legend { display:flex; gap:16px; justify-content:center; margin-top:8px; font-size:0.85rem; color:var(--muted); }
 .legend-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:4px; }
 
+/* Auth Header & Modal */
+.bar-inner { max-width:960px; margin:0 auto; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
+.auth-nav { display:flex; align-items:center; gap:10px; font-size:0.9rem; flex-wrap:wrap; }
+.auth-badge { display:inline-flex; align-items:center; gap:6px; font-size:0.8rem; font-weight:700; padding:3px 8px; border-radius:12px; }
+.badge-owner { background:#dbeafe; color:#1e40af; border:1px solid #93c5fd; }
+.badge-customer { background:#dcfce7; color:#166534; border:1px solid #86efac; }
+.badge-admin { background:#fef3c7; color:#92400e; border:1px solid #fcd34d; }
+@media (prefers-color-scheme: dark) {
+  .badge-owner { background:#1e3a8a; color:#dbeafe; border-color:#3b82f6; }
+  .badge-customer { background:#14532d; color:#dcfce7; border-color:#22c55e; }
+  .badge-admin { background:#78350f; color:#fef3c7; border-color:#f59e0b; }
+}
+.btn-sm { padding:6px 12px; font-size:0.85rem; border-radius:4px; }
+.btn-link { background:none; border:none; color:var(--accent); text-decoration:underline; cursor:pointer; padding:0; font-size:0.85rem; }
+
+/* Modal */
+.modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; padding:16px; z-index:100; backdrop-filter:blur(2px); }
+.modal-card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:24px; max-width:440px; width:100%; box-shadow:0 8px 30px rgba(0,0,0,0.25); max-height:90vh; overflow-y:auto; }
+.modal-tabs { display:flex; border-bottom:1px solid var(--line); margin-bottom:18px; }
+.modal-tab { flex:1; text-align:center; padding:10px; background:none; border:none; font-weight:700; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; }
+.modal-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+.role-pill-group { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-bottom:14px; }
+.role-pill { padding:8px 4px; text-align:center; border:1px solid var(--line); border-radius:6px; cursor:pointer; font-size:0.85rem; background:var(--bg); }
+.role-pill.selected { border-color:var(--accent); background:var(--accent); color:var(--accent-ink); font-weight:700; }
+
+/* Admin Console */
+.admin-table-wrap { overflow-x:auto; margin-top:16px; }
+.admin-table { width:100%; border-collapse:collapse; font-size:0.9rem; text-align:left; }
+.admin-table th, .admin-table td { padding:10px 12px; border-bottom:1px solid var(--line); }
+.admin-table th { background:var(--bg); font-weight:700; color:var(--muted); }
+.admin-table tr:hover { background:rgba(0,0,0,0.02); }
+
+
