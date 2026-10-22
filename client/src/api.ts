@@ -27,8 +27,9 @@ export async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
   if (!headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  if (token && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${token}`);
+  if (token) {
+    if (!headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
+    if (!headers.has('x-auth-token')) headers.set('x-auth-token', `Bearer ${token}`);
   }
   const r = await fetch(API + path, { ...opts, headers });
   const body = await r.json().catch(() => ({}));

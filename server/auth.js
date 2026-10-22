@@ -32,13 +32,13 @@ export const cognitoClient = new CognitoIdentityProviderClient({ region: REGION 
  * Attaches req.user = { id, email, name, role, groups } or null.
  */
 export async function verifyToken(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  const rawHeader = req.headers.authorization || req.headers['x-auth-token'];
+  if (!rawHeader) {
     req.user = null;
     return next();
   }
 
-  const token = authHeader.slice(7).trim();
+  const token = rawHeader.startsWith('Bearer ') ? rawHeader.slice(7).trim() : String(rawHeader).trim();
   if (!token) {
     req.user = null;
     return next();

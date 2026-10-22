@@ -72,7 +72,7 @@ export function getCurrentUser(): AuthUser | null {
 }
 
 export function getAuthHeaders(): Record<string, string> {
-  return currentToken ? { Authorization: `Bearer ${currentToken}` } : {};
+  return currentToken ? { Authorization: `Bearer ${currentToken}`, 'x-auth-token': `Bearer ${currentToken}` } : {};
 }
 
 function setSession(res: AuthResponse | null) {
