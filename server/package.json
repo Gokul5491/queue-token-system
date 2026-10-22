@@ -1,0 +1,19 @@
+{
+  "name": "queue-server",
+  "version": "1.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env index.js",
+    "test": "node --env-file-if-exists=.env test/e2e.mjs",
+    "smoke": "node --env-file-if-exists=.env test/smoke.mjs"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "mongodb": "^7.7.0",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.7.5"
+  }
+}
