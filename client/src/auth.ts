@@ -19,12 +19,32 @@ export type AuthResponse = {
   user: AuthUser;
 };
 
+export const COGNITO_REGION = 'ap-south-1';
+export const COGNITO_CLIENT_ID = 'u4svfjkcl6vmq7glgtp8vhcel';
+const COGNITO_ENDPOINT = `https://cognito-idp.${COGNITO_REGION}.amazonaws.com/`;
+
 const TOKEN_KEY = 'cognito_id_token';
 const USER_KEY = 'cognito_user';
 
 let currentToken: string | null = null;
 let currentUser: AuthUser | null = null;
 const listeners = new Set<(user: AuthUser | null) => void>();
+
+function parseJwt(token: string): any {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(jsonPayload);
+  } catch {
+    return null;
+  }
+}
 
 export function initAuth() {
   try {
@@ -70,13 +90,66 @@ function setSession(res: AuthResponse | null) {
   listeners.forEach((fn) => fn(currentUser));
 }
 
-export async function login(email: string, password: string): Promise<AuthUser> {
-  const res = await req<AuthResponse>('/api/auth/login', {
+export async function loginWithCognitoDirect(email: string, password: string): Promise<AuthResponse> {
+  const res = await fetch(COGNITO_ENDPOINT, {
     method: 'POST',
-    body: JSON.stringify({ email, password }),
+    headers: {
+      'Content-Type': 'application/x-amz-json-1.1',
+      'X-Amz-Target': 'AWSCognitoIdentityProviderService.InitiateAuth',
+    },
+    body: JSON.stringify({
+      AuthFlow: 'USER_PASSWORD_AUTH',
+      ClientId: COGNITO_CLIENT_ID,
+      AuthParameters: {
+        USERNAME: email.trim().toLowerCase(),
+        PASSWORD: password,
+      },
+    }),
   });
-  setSession(res);
-  return res.user;
+  const data = await res.json();
+  if (!res.ok || data.__type) {
+    const msg = data.message || data.__type || 'Authentication failed';
+    throw new Error(msg);
+  }
+  const result = data.AuthenticationResult;
+  const payload = parseJwt(result.IdToken);
+  const groups: string[] = payload?.['cognito:groups'] || [];
+  let role: UserRole = 'Customer';
+  if (groups.includes('Admin')) role = 'Admin';
+  else if (groups.includes('Owner')) role = 'Owner';
+
+  return {
+    idToken: result.IdToken,
+    accessToken: result.AccessToken,
+    refreshToken: result.RefreshToken,
+    expiresIn: result.ExpiresIn,
+    user: {
+      id: payload?.sub || '',
+      email: payload?.email || email,
+      name: payload?.name || email.split('@')[0],
+      role,
+      groups,
+    },
+  };
+}
+
+export async function login(email: string, password: string): Promise<AuthUser> {
+  try {
+    const res = await loginWithCognitoDirect(email, password);
+    setSession(res);
+    return res.user;
+  } catch (err: any) {
+    try {
+      const res = await req<AuthResponse>('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password }),
+      });
+      setSession(res);
+      return res.user;
+    } catch {
+      throw err;
+    }
+  }
 }
 
 export async function register(
