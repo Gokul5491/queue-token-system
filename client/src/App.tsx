@@ -283,6 +283,13 @@ function Customer({ id }: { id: string }) {
                 : ` Estimated wait: about ${waitMinutes} minutes.`}
             </p>
           )}
+          {status?.kind === 'skipped' && (
+            <div className="alert-skipped" role="alert" style={{ margin: '16px 0', padding: '14px', background: 'var(--card)', border: '1px solid var(--warn)', borderRadius: '8px' }}>
+              <p style={{ fontWeight: 700, color: 'var(--warn)', margin: '0 0 8px 0' }}>Your number was skipped</p>
+              <p style={{ margin: '0 0 12px 0' }}>Your ticket was called at the counter, but you were marked as skipped. Please speak with staff or request a new ticket.</p>
+              <button className="secondary" onClick={clearTicket}>Get a new number</button>
+            </div>
+          )}
           {status?.kind === 'served' && (
             <>
               <p>You have been served. Thank you.</p>
@@ -377,10 +384,11 @@ function Owner({ id }: { id: string }) {
         <p className="big">{state.nowServing ? state.nowServing : 'None'}</p>
         {state.nowServing > 0 && names[state.nowServing] && <p><strong>{names[state.nowServing]}</strong></p>}
         <div className="row">
-          <button className="primary" onClick={() => act('next')} disabled={busy}>Call next</button>
-          <button className="secondary" onClick={() => act('skip')} disabled={busy || state.nowServing === 0}>Skip number</button>
+          <button className="primary" onClick={() => act('next')} disabled={busy || state.paused}>Call next</button>
+          <button className="secondary" onClick={() => act('skip')} disabled={busy || state.nowServing === 0 || state.paused}>Skip number</button>
           <button className="secondary" onClick={() => act('pause')} disabled={busy}>{state.paused ? 'Resume queue' : 'Pause queue'}</button>
         </div>
+        {state.paused && <p className="muted" style={{ marginTop: '8px', color: 'var(--warn)' }}>Queue is currently paused. Resume to call or skip tickets.</p>}
         {err && <p className="error" role="alert">{err}</p>}
       </div>
 
@@ -388,15 +396,15 @@ function Owner({ id }: { id: string }) {
         <h2>Today's Stats</h2>
         <div className="stats-grid">
           <div className="stat-card">
-            <div className="stat-label">Served</div>
-            <div className="stat-val">{state.servedCount}</div>
+            <div className="stat-label">Served Today</div>
+            <div className="stat-val">{state.todayServed ?? state.servedCount}</div>
           </div>
           <div className="stat-card">
-            <div className="stat-label">Skipped</div>
-            <div className="stat-val">{state.skippedCount ?? 0}</div>
+            <div className="stat-label">Skipped Today</div>
+            <div className="stat-val">{state.todaySkipped ?? state.skippedCount ?? 0}</div>
           </div>
           <div className="stat-card">
-            <div className="stat-label">Avg Wait</div>
+            <div className="stat-label">Avg Service Time</div>
             <div className="stat-val">{state.avgMinutes}<span style={{ fontSize: '1rem' }}>m</span></div>
           </div>
           <div className="stat-card">

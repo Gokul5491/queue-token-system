@@ -14,7 +14,10 @@ export type QState = {
   avgMinutes: number;
   servedCount: number;
   skippedCount?: number;
+  todayServed?: number;
+  todaySkipped?: number;
   waiting: { number: number }[];
+  skipped?: number[];
   history?: QHistoryItem[];
 };
 

@@ -2,6 +2,7 @@ import express from 'express';
 import http from 'http';
 import cors from 'cors';
 import { Server } from 'socket.io';
+import { rateLimit } from 'express-rate-limit';
 import * as db from './db.js';
 
 if (!process.env.MONGODB_URI && !process.env.DATABASE_URL) {
@@ -9,13 +10,46 @@ if (!process.env.MONGODB_URI && !process.env.DATABASE_URL) {
   process.exit(1);
 }
 
+// In production, require an explicit frontend origin to protect CORS
+if (process.env.NODE_ENV === 'production' && !process.env.CLIENT_ORIGIN) {
+  console.error('FATAL: CLIENT_ORIGIN must be set in production mode to prevent unauthorized cross-origin requests.');
+  process.exit(1);
+}
+
 const PORT = process.env.PORT || 4000;
-const ORIGIN = process.env.CLIENT_ORIGIN || true;
+const ORIGIN = process.env.CLIENT_ORIGIN || (process.env.NODE_ENV === 'production' ? false : true);
 const ID_RE = /^[A-Z0-9]{6}$/;
 
 const app = express();
+app.set('trust proxy', 1);
 app.use(cors({ origin: ORIGIN }));
 app.use(express.json({ limit: '2kb' }));
+
+// Rate limiters to prevent spam and abuse
+const createQueueLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many queues created. Please try again later.' },
+});
+
+const joinQueueLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 100, // accommodates batch rush in tests while preventing runaway bot flooding
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many join attempts. Please slow down.' },
+});
+
+const ownerLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please slow down.' },
+});
+
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: ORIGIN } });
 
@@ -48,7 +82,7 @@ app.get('/health', route(async (_req, res) => {
   res.json({ ok: true, database: 'mongodb' });
 }));
 
-app.post('/api/queues', route(async (req, res) => {
+app.post('/api/queues', createQueueLimiter, route(async (req, res) => {
   const name = clean(req.body?.name, 60);
   if (!name) return res.status(400).json({ error: 'Enter a name for the queue' });
   res.status(201).json(await db.createQueue(name));
@@ -61,7 +95,16 @@ app.get('/api/queues/:id', route(async (req, res) => {
   res.json(state);
 }));
 
-app.post('/api/queues/:id/join', route(async (req, res) => {
+app.get('/api/queues/:id/tickets/:number', route(async (req, res) => {
+  const id = idOf(req);
+  const num = parseInt(req.params.number, 10);
+  if (!ID_RE.test(id) || isNaN(num)) return notFound(res);
+  const t = await db.ticketState(id, num);
+  if (!t) return res.status(404).json({ error: 'Ticket not found' });
+  res.json(t);
+}));
+
+app.post('/api/queues/:id/join', joinQueueLimiter, route(async (req, res) => {
   const id = idOf(req);
   if (!ID_RE.test(id)) return notFound(res);
   const name = clean(req.body?.name, 40);
@@ -74,30 +117,34 @@ app.post('/api/queues/:id/join', route(async (req, res) => {
   res.status(201).json({ number: r.number, state: r.state });
 }));
 
-app.get('/api/queues/:id/owner', route(async (req, res) => {
+app.get('/api/queues/:id/owner', ownerLimiter, route(async (req, res) => {
   const id = await owner(req, res);
   if (id) res.json({ names: await db.ownerNames(id) });
 }));
 
-app.post('/api/queues/:id/next', route(async (req, res) => {
+app.post('/api/queues/:id/next', ownerLimiter, route(async (req, res) => {
   const id = await owner(req, res);
   if (!id) return;
   const r = await db.callNext(id);
   if (r.error === 'not_found') return notFound(res);
+  if (r.error === 'paused') return res.status(409).json({ error: 'This queue is paused' });
+  if (r.error === 'conflict') return res.status(409).json({ error: 'Another action is in progress. Please retry.' });
   broadcast(id, r.state);
   res.json(r.state);
 }));
 
-app.post('/api/queues/:id/skip', route(async (req, res) => {
+app.post('/api/queues/:id/skip', ownerLimiter, route(async (req, res) => {
   const id = await owner(req, res);
   if (!id) return;
   const r = await db.skipCurrent(id);
   if (r.error === 'not_found') return notFound(res);
+  if (r.error === 'paused') return res.status(409).json({ error: 'This queue is paused' });
+  if (r.error === 'conflict') return res.status(409).json({ error: 'Another action is in progress. Please retry.' });
   broadcast(id, r.state);
   res.json(r.state);
 }));
 
-app.post('/api/queues/:id/pause', route(async (req, res) => {
+app.post('/api/queues/:id/pause', ownerLimiter, route(async (req, res) => {
   const id = await owner(req, res);
   if (!id) return;
   const r = await db.togglePause(id);

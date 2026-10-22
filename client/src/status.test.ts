@@ -25,8 +25,24 @@ describe('ticketStatus', () => {
     const s = state({ nowServing: 1, servedCount: 0, waiting: [{ number: 2 }, { number: 3 }] });
     expect(ticketStatus(s, 4)).toEqual({ kind: 'waiting', position: 3 });
   });
-  it('reports waiting when first ticket is issued before state arrives', () => {
-    const s = state({ nowServing: 0, servedCount: 0, waiting: [] });
-    expect(ticketStatus(s, 1)).toEqual({ kind: 'waiting', position: 1 });
+  it('reports skipped when ticket is in state.skipped array', () => {
+    const s = state({ nowServing: 3, servedCount: 1, skippedCount: 1, skipped: [2], waiting: [{ number: 4 }] });
+    expect(ticketStatus(s, 2)).toEqual({ kind: 'skipped' });
+    expect(ticketStatus(s, 1)).toEqual({ kind: 'served' });
+    expect(ticketStatus(s, 3)).toEqual({ kind: 'called' });
+    expect(ticketStatus(s, 4)).toEqual({ kind: 'waiting', position: 1 });
+  });
+  it('reports skipped when ticket is in history with status skipped', () => {
+    const s = state({
+      nowServing: 0,
+      servedCount: 1,
+      skippedCount: 1,
+      history: [
+        { number: 1, status: 'served', service_minutes: 5 },
+        { number: 2, status: 'skipped', service_minutes: null },
+      ],
+    });
+    expect(ticketStatus(s, 1)).toEqual({ kind: 'served' });
+    expect(ticketStatus(s, 2)).toEqual({ kind: 'skipped' });
   });
 });

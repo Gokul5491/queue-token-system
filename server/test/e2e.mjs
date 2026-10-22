@@ -114,9 +114,11 @@ try {
     assert.deepEqual((await api(`/queues/${id}/owner`, { key })).body.names, { 1: 'Asha', 2: 'Ravi' });
   });
 
-  await test('pausing blocks new tickets and resuming allows them', async () => {
+  await test('pausing blocks new tickets, call next, and skip', async () => {
     assert.equal((await api(`/queues/${id}/pause`, { method: 'POST', key })).body.paused, true);
     assert.equal((await api(`/queues/${id}/join`, { method: 'POST', body: { name: 'Late' } })).status, 409);
+    assert.equal((await api(`/queues/${id}/next`, { method: 'POST', key })).status, 409, 'next should be blocked when paused');
+    assert.equal((await api(`/queues/${id}/skip`, { method: 'POST', key })).status, 409, 'skip should be blocked when paused');
     await waitFor(() => customer.states.at(-1)?.paused === true, 'customer sees paused');
     assert.equal((await api(`/queues/${id}/pause`, { method: 'POST', key })).body.paused, false);
   });
@@ -133,9 +135,15 @@ try {
     const s = (await api(`/queues/${id}/skip`, { method: 'POST', key })).body;
     assert.equal(s.nowServing, 2);
     assert.equal(s.skippedCount, 1);
+    assert.equal(s.todaySkipped, 1);
+    assert.deepEqual(s.skipped, [1]);
     const row = await rawDb.collection('tickets').findOne({ queue_id: id, number: 1 });
     assert.equal(row.status, 'skipped');
     assert.equal(row.name, '');
+
+    const t1 = await api(`/queues/${id}/tickets/1`);
+    assert.equal(t1.status, 200);
+    assert.equal(t1.body.status, 'skipped');
   });
 
   await test('served ticket: status, name erasure, and counts', async () => {
@@ -143,10 +151,16 @@ try {
     const s = (await api(`/queues/${id}/next`, { method: 'POST', key })).body;
     assert.equal(s.servedCount, 1);
     assert.equal(s.skippedCount, 1);
+    assert.equal(s.todayServed, 1);
+    assert.equal(s.todaySkipped, 1);
     assert.ok(!s.waiting.some((w) => w.number === 2), 'served ticket must leave waiting list');
     const row = await rawDb.collection('tickets').findOne({ queue_id: id, number: 2 });
     assert.equal(row.status, 'served');
     assert.equal(row.name, '');
+
+    const t2 = await api(`/queues/${id}/tickets/2`);
+    assert.equal(t2.status, 200);
+    assert.equal(t2.body.status, 'served');
   });
 
   await test('finishing the last customer leaves nobody being served', async () => {
@@ -162,6 +176,25 @@ try {
     assert.ok(rs.every((r) => r.status === 201));
     const nums = rs.map((r) => r.body.number).sort((a, b) => a - b);
     assert.deepEqual(nums, Array.from({ length: 25 }, (_, i) => i + 1));
+  });
+
+  await test('concurrent owner actions (simultaneous call/skip) are handled safely', async () => {
+    const cq = (await api('/queues', { method: 'POST', body: { name: 'Concurrent' } })).body;
+    await Promise.all([
+      api(`/queues/${cq.id}/join`, { method: 'POST', body: { name: 'User1' } }),
+      api(`/queues/${cq.id}/join`, { method: 'POST', body: { name: 'User2' } }),
+      api(`/queues/${cq.id}/join`, { method: 'POST', body: { name: 'User3' } }),
+    ]);
+
+    const results = await Promise.all([
+      api(`/queues/${cq.id}/next`, { method: 'POST', key: cq.ownerKey }),
+      api(`/queues/${cq.id}/skip`, { method: 'POST', key: cq.ownerKey }),
+    ]);
+
+    // Both should either succeed or return 409 conflict, without unhandled crashes
+    assert.ok(results.every((r) => r.status === 200 || r.status === 409));
+    const finalState = (await api(`/queues/${cq.id}`)).body;
+    assert.ok(finalState.nowServing >= 0);
   });
 
   let before;
